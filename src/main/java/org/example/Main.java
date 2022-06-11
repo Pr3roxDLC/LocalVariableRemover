@@ -3,29 +3,26 @@ package org.example;
 import net.lingala.zip4j.ZipFile;
 import net.lingala.zip4j.exception.ZipException;
 import net.lingala.zip4j.model.ZipParameters;
-import org.objectweb.asm.*;
-import org.objectweb.asm.tree.*;
-import org.objectweb.asm.util.TraceClassVisitor;
+import org.example.io.ByteProvider;
+import org.example.transformer.LocalVariableReplacer;
+import org.example.transformer.MethodRenamer;
 
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Stack;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
+import java.util.HashMap;
+import java.util.stream.Collectors;
 
 
 public class Main {
 
     //  Remember to replace it with your own file address here
 
-    public static final String PATH = "/home/tim/Desktop/";
+    public static ByteProvider byteProvider = new ByteProvider();
 
     public static void main(String[] args) throws IOException {
-        String jarPath = args[0];
+        String jarPath = "/home/tim/Desktop/ByteCodeTest.jar";
         String jarPathOut = jarPath.split("\\.")[0] + "2.jar";
 
         String tempdir = jarPath.split("\\.")[0] + "/";
@@ -50,19 +47,24 @@ public class Main {
                     new File(outPutTempDirFolder, relativePath).mkdirs();
                 });
 
+        Obfuscator.addTransformer(new MethodRenamer());
+        Obfuscator.addTransformer(new LocalVariableReplacer(LocalVariableReplacer.NamingMode.UNDERSCORE));
 
         //Transform the files
+        HashMap<File, byte[]> classes = new HashMap<>();
         Files.walk(Paths.get(tempdirFolder.getPath()))
                 .filter(Files::isRegularFile)
                 .filter(n -> n.toFile().getName().endsWith(".class"))
                 .forEach(n -> {
                     System.out.println(n);
                     try {
-                        parseClass(n.toFile(), outputTempDir, tempdir);
+                        classes.put(n.toFile(), Files.readAllBytes(n));
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
                 });
+
+        parseClasses(classes, outputTempDir, tempdir);
 
         //Add all the non class files to the zip
         Files.walk(Paths.get(tempdirFolder.getPath()))
@@ -100,26 +102,19 @@ public class Main {
     }
 
 
-    private static void parseClass(File file, String outputPath, String inputPath) throws IOException {
+    private static void parseClasses(HashMap<File, byte[]> classes, String outputPath, String inputPath) throws IOException {
 
+        HashMap<File, byte[]> classesOut = Obfuscator.transform(classes);
 
-        String relativePath = new File(inputPath).toURI().relativize(file.toURI()).getPath();
-        System.out.println(relativePath);
-
-        ClassReader reader = new ClassReader(new FileInputStream(file));
-        ClassWriter writer = new ClassWriter(reader, 0);
-
-        TraceClassVisitor printer = new TraceClassVisitor(writer,
-                new PrintWriter(System.getProperty("java.io.tmpdir")
-                        + File.separator + "TheClass" + ".log"));
-
-        ClassAdapter adapter = new ClassAdapter(printer);
-        reader.accept(adapter, 0);
-        byte[] b = writer.toByteArray();
-
-        Files.write(new File(outputPath + relativePath).toPath(), b);
-
-
+        classesOut.forEach( (file, bytes) -> {
+            String relativePath = new File(inputPath).toURI().relativize(file.toURI()).getPath();
+            byteProvider.classBytes.put(relativePath.split("\\.")[0], bytes);
+            try {
+                Files.write(new File(outputPath + relativePath + "//").toPath(), bytes);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
     }
 
 }
